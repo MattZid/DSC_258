@@ -141,16 +141,32 @@ def Q4(C, catID, dataTrain, dataValid, dataTest):
 
 # %%
 def Jaccard(s1, s2):
-    # Implement
-    # Placeholder return to keep earlier questions testable
-    return 0.0
+    set1 = s1 if isinstance(s1, set) else set(s1)
+    set2 = s2 if isinstance(s2, set) else set(s2)
+    if not set1 and not set2:
+        return 0.0
+    union = set1.union(set2)
+    if not union:
+        return 0.0
+    intersection = set1.intersection(set2)
+    return len(intersection) / len(union)
 
 # %%
 def mostSimilar(i, N, usersPerItem):
-    # Implement...
-
-    # Should be a list of (similarity, itemID) pairs
+    target_users = usersPerItem.get(i)
+    if target_users is None:
+        return []
+    if not target_users:
+        return []
     similarities = []
+
+    for j, users in usersPerItem.items():
+        if j == i:
+            continue
+        sim = Jaccard(target_users, users)
+        similarities.append((sim, j))
+
+    similarities.sort(key=lambda x: (-x[0], x[1]))
     return similarities[:N]
 
 # %%
@@ -161,23 +177,39 @@ def mostSimilar(i, N, usersPerItem):
 
 # %%
 def MSE(y, ypred):
-    # Implement...
-    # Placeholder
-    return 0.0
+    if not y:
+        return 0.0
+    if len(y) != len(ypred):
+        raise ValueError("Predictions and labels must have the same length")
+    se = [(float(yi) - float(yp)) ** 2 for yi, yp in zip(y, ypred)]
+    return sum(se) / len(se)
 
 # %%
 def getMeanRating(dataTrain):
-    # Implement...
-    return 0.0
+    if not dataTrain:
+        return 0.0
+    total = sum(d['star_rating'] for d in dataTrain)
+    return total / len(dataTrain)
 
 def getUserAverages(itemsPerUser, ratingDict):
-    # Implement (should return a dictionary mapping users to their averages)
+    # Compute the training-set average rating for each user
     userAverages = {}
+    for user, items in itemsPerUser.items():
+        if not items:
+            continue
+        ratings = [ratingDict[(user, item)] for item in items if (user, item) in ratingDict]
+        if ratings:
+            userAverages[user] = sum(ratings) / len(ratings)
     return userAverages
 
 def getItemAverages(usersPerItem, ratingDict):
-    # Implement...
     itemAverages = {}
+    for item, users in usersPerItem.items():
+        if not users:
+            continue
+        ratings = [ratingDict[(user, item)] for user in users if (user, item) in ratingDict]
+        if ratings:
+            itemAverages[item] = sum(ratings) / len(ratings)
     return itemAverages
 
 # %%
@@ -186,7 +218,36 @@ def getItemAverages(usersPerItem, ratingDict):
 # %%
 def predictRating(user,item,ratingMean,reviewsPerUser,usersPerItem,itemsPerUser,userAverages,itemAverages):
     # Solution for Q6, should return a rating
-    return ratingMean
+    base_rating = itemAverages.get(item, ratingMean)
+    user_reviews = reviewsPerUser.get(user, [])
+
+    target_users = usersPerItem.get(item, set())
+    if not user_reviews or not target_users:
+        return base_rating
+
+    numerator = 0.0
+    denominator = 0.0
+
+    for review in user_reviews:
+        neighbor_item = review['product_id']
+        if neighbor_item == item:
+            continue
+        neighbor_users = usersPerItem.get(neighbor_item, set())
+        if not neighbor_users:
+            continue
+        sim = Jaccard(target_users, neighbor_users)
+        if sim <= 0:
+            continue
+        neighbor_rating = review['star_rating']
+        neighbor_avg = itemAverages.get(neighbor_item, ratingMean)
+        numerator += (neighbor_rating - neighbor_avg) * sim
+        denominator += sim
+
+    if denominator == 0:
+        return base_rating
+
+    prediction = base_rating + numerator / denominator
+    return min(max(prediction, 1.0), 5.0)
 
 # %%
 
@@ -196,7 +257,54 @@ def predictRating(user,item,ratingMean,reviewsPerUser,usersPerItem,itemsPerUser,
 
 # %%
 def predictRatingQ7(user,item,ratingMean,reviewsPerUser,usersPerItem,itemsPerUser,userAverages,itemAverages):
-    # Your solution here
-    return ratingMean
+    target_users = usersPerItem.get(item, set())
+    user_reviews = reviewsPerUser.get(user, [])
+
+    item_avg = itemAverages.get(item)
+    user_avg = userAverages.get(user)
+
+    baseline_components = [ratingMean]
+    if item_avg is not None:
+        baseline_components.append(item_avg)
+    if user_avg is not None:
+        baseline_components.append(user_avg)
+    baseline = sum(baseline_components) / len(baseline_components)
+
+    if not target_users or not user_reviews:
+        return min(max(baseline, 1.0), 5.0)
+
+    numerator = 0.0
+    denom = 0.0
+
+    for review in user_reviews:
+        neighbor_item = review['product_id']
+        if neighbor_item == item:
+            continue
+        neighbor_users = usersPerItem.get(neighbor_item, set())
+        if not neighbor_users:
+            continue
+        overlap = len(target_users & neighbor_users)
+        if overlap == 0:
+            continue
+        sim = Jaccard(target_users, neighbor_users)
+        if sim <= 0:
+            continue
+        significance = overlap / (overlap + 2.0)
+        weight = sim * significance
+        neighbor_rating = review['star_rating']
+        neighbor_avg = itemAverages.get(neighbor_item, ratingMean)
+        numerator += (neighbor_rating - neighbor_avg) * weight
+        denom += weight
+
+    prediction = baseline
+    if denom > 0:
+        adjustment = numerator / denom
+        shrink = denom / (denom + 1.0)
+        prediction = baseline + shrink * adjustment
+
+    if user_avg is not None:
+        prediction = 0.8 * prediction + 0.2 * user_avg
+
+    return min(max(prediction, 1.0), 5.0)
 
 # %%
